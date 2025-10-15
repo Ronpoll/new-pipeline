@@ -33,35 +33,59 @@ Parameters:
     Default: 10.0.1.0/24
 
 Resources:
-  IamStack:
-    Type: AWS::CloudFormation::Stack
-    Properties:
-      TemplateURL: iam.yaml
-
+  #################################
+  # VPC Stack
+  #################################
   VpcStack:
     Type: AWS::CloudFormation::Stack
     Properties:
       TemplateURL: vpc.yaml
+      Parameters:
+        VpcCidr: !Ref VpcCidr
+        PublicSubnetACidr: !Ref PublicSubnetACidr
+        PublicSubnetBCidr: !Ref PublicSubnetBCidr
+        PrivateSubnetCidr: !Ref PrivateSubnetCidr
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectTag
 
+  #################################
+  # EC2 Stack
+  #################################
   Ec2Stack:
     Type: AWS::CloudFormation::Stack
     DependsOn: VpcStack
     Properties:
       TemplateURL: ec2.yaml
       Parameters:
-        VpcId: !GetAtt VpcStack.Outputs.VpcId
-        SubnetId: !GetAtt VpcStack.Outputs.PrivateSubnet1
-        SecurityGroupId: !GetAtt VpcStack.Outputs.PrivateSG
+        VpcId: !GetAtt VpcStack.Outputs.VPC1Id
+        SubnetId: !GetAtt VpcStack.Outputs.PrivateSubnet1AId
+        SecurityGroupId: !GetAtt VpcStack.Outputs.WebSecurityGroupId
+        InstanceType: !Ref InstanceType
+        KeyName: !Ref KeyName
         LatestAmiId: !Ref LatestAmiId
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectTag
 
+  #################################
+  # ALB Stack
+  #################################
   AlbStack:
     Type: AWS::CloudFormation::Stack
     DependsOn: Ec2Stack
     Properties:
       TemplateURL: alb.yaml
       Parameters:
-        VpcId: !GetAtt VpcStack.Outputs.VpcId
+        VpcId: !GetAtt VpcStack.Outputs.VPC1Id
+        PublicSubnetAId: !GetAtt VpcStack.Outputs.PublicSubnetAId
+        PublicSubnetBId: !GetAtt VpcStack.Outputs.PublicSubnetBId
+        AlbSecurityGroupId: !GetAtt VpcStack.Outputs.AlbSecurityGroupId
         TargetInstanceId: !GetAtt Ec2Stack.Outputs.InstanceId
+        TargetPort: 80
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectTag
 
 Outputs:
   ProjectRegion:
