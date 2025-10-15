@@ -1,68 +1,40 @@
 version: 0.2
 
-env:
-  variables:
-    PROJECT_NAME: "pipeline-project"
-  shell: bash
-
 phases:
   install:
+    runtime-versions:
+      python: 3.11
     commands:
-      - echo "==> Installing dependencies"
+      - echo "Installing prerequisites..."
       - aws --version
       - pip install --upgrade pip
       - pip install cfn-lint
       - |
-        echo "==> Installing Session Manager Plugin"
-        if ! command -v session-manager-plugin >/dev/null; then
-          curl -s "https://s3.amazonaws.com/session-manager-downloads/plugin/latest/linux_64bit/session-manager-plugin.rpm" -o session-manager-plugin.rpm
-          sudo dnf install -y session-manager-plugin.rpm
-        else
-          echo "Session Manager Plugin already installed"
-        fi
-
-  pre_build:
-    commands:
-      - echo "==> Validating CloudFormation templates"
-      - cfn-lint -t root.yaml || echo "Lint warnings only – continuing"
+        echo "Installing AWS Session Manager plugin (optional)..."
+        curl -s "https://s3.amazonaws.com/session-manager-downloads/plugin/latest/linux_64bit/session-manager-plugin.rpm" -o session-manager-plugin.rpm
+        sudo dnf install -y session-manager-plugin.rpm || true
+      - echo "Environment setup complete."
 
   build:
     commands:
-      - echo "==> Preparing dynamic environment"
-      - ACCOUNT_ID=$(aws sts get-caller-identity --query "Account" --output text)
-      - REGION=$(aws configure get region || echo "us-east-1")
-      - RANDOM_SUFFIX=$(openssl rand -hex 3 | tr 'A-Z' 'a-z')
-      - export BUCKET_NAME=$(echo "${PROJECT_NAME}-pipeline-${ACCOUNT_ID}-${REGION}-${RANDOM_SUFFIX}" | tr '[:upper:]' '[:lower:]' | tr -cd 'a-z0-9-')
-      - echo "==> Using S3 bucket: ${BUCKET_NAME}"
+      - echo "Starting build phase..."
+      - echo "Running CloudFormation linter..."
+      - cfn-lint -t root.yaml || true
 
-      # Create S3 bucket if not exists
-      - |
-        if ! aws s3api head-bucket --bucket "$BUCKET_NAME" 2>/dev/null; then
-          echo "Creating S3 bucket: $BUCKET_NAME"
-          aws s3 mb "s3://$BUCKET_NAME" --region "$REGION"
-          aws s3api put-bucket-versioning --bucket "$BUCKET_NAME" --versioning-configuration Status=Enabled
-        else
-          echo "S3 bucket $BUCKET_NAME already exists"
-        fi
-
-      # Package CloudFormation with dynamic bucket
-      - |
-        aws cloudformation package \
+      - echo "Packaging CloudFormation templates..."
+      - aws cloudformation package \
           --template-file root.yaml \
-          --s3-bucket "$BUCKET_NAME" \
-          --output-template-file packaged.yaml \
-          --region "$REGION"
+          --s3-bucket "$ARTIFACT_BUCKET" \
+          --output-template-file packaged.yaml
 
-      - echo "==> Build phase complete"
-
-  post_build:
-    commands:
-      - echo "==> Uploading artifacts to S3"
-      - aws s3 sync . "s3://$BUCKET_NAME/artifacts/" --exclude "*" --include "*.yaml"
-      - echo "==> Build completed successfully for ${PROJECT_NAME}"
+      - echo "Verifying packaged.yaml exists..."
+      - test -f packaged.yaml && echo "Packaging complete." || (echo "packaged.yaml missing!" && exit 1)
 
 artifacts:
   files:
     - packaged.yaml
     - "*.yaml"
-  discard-paths: yes
+
+cache:
+  paths:
+    - '/root/.cache/pip/**/*'
