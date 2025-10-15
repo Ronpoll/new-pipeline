@@ -63,95 +63,62 @@ Resources:
         - Key: Name
           Value: PrivateWeb
       UserData:
-        Fn::Base64: !Sub |
-          #!/bin/bash -xe
-          dnf -y update
-          dnf -y install httpd
-          systemctl enable --now httpd
-          systemctl enable --now amazon-ssm-agent || true
+  Fn::Base64: |
+    #!/bin/bash -xe
+    dnf -y update
+    dnf -y install httpd
+    systemctl enable --now httpd
+    systemctl enable --now amazon-ssm-agent || true
 
-          # health check for ALB
-          echo OK > /var/www/html/health.html
+    echo OK > /var/www/html/health.html
 
-          # create metadata renderer
-          cat >/usr/local/bin/render-meta.sh <<'SH'
-          #!/bin/bash
-          set -euo pipefail
-          TOKEN=$(curl -sX PUT "http://169.254.169.254/latest/api/token" \
-                   -H "X-aws-ec2-metadata-token-ttl-seconds: 21600")
-          IID=$(curl -sH "X-aws-ec2-metadata-token: $TOKEN" \
-                   http://169.254.169.254/latest/meta-data/instance-id)
-          AZ=$(curl -sH "X-aws-ec2-metadata-token: $TOKEN" \
-                   http://169.254.169.254/latest/meta-data/placement/availability-zone)
-          IP=$(hostname -I | awk '{print $1}')
+    cat >/usr/local/bin/render-meta.sh <<'SH'
+    #!/bin/bash
+    set -euo pipefail
+    TOKEN=$(curl -sX PUT "http://169.254.169.254/latest/api/token" \
+             -H "X-aws-ec2-metadata-token-ttl-seconds: 21600")
+    IID=$(curl -sH "X-aws-ec2-metadata-token: \$TOKEN" \
+             http://169.254.169.254/latest/meta-data/instance-id)
+    AZ=$(curl -sH "X-aws-ec2-metadata-token: \$TOKEN" \
+             http://169.254.169.254/latest/meta-data/placement/availability-zone)
+    IP=$(hostname -I | awk '{print \$1}')
 
-          cat >/var/www/html/index.html <<HTML
-          <!doctype html>
-          <html lang="en">
-          <head>
-            <meta charset="utf-8">
-            <meta name="viewport" content="width=device-width, initial-scale=1">
-            <title>DevSecOps Demo – Private EC2 + ALB</title>
-            <style>
-              body { font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; margin:0; padding:0; background:#0f172a; color:#e2e8f0; }
-              header { padding:28px 24px; background:#111827; border-bottom:1px solid #1f2937; }
-              h1 { margin:0; font-size:28px; }
-              .chip { display:inline-block; padding:6px 10px; border-radius:999px; background:#1f2937; font-size:12px; margin-left:8px; }
-              main { padding:32px 24px; }
-              .card { background:#111827; border:1px solid #1f2937; border-radius:16px; padding:24px; max-width:960px; margin:0 auto; box-shadow: 0 10px 30px rgba(0,0,0,.35); }
-              .grid { display:grid; grid-template-columns: 1fr 1fr 1fr; gap:16px; margin-top:16px; }
-              .metric { background:#0b1220; border:1px solid #1f2937; border-radius:12px; padding:16px; }
-              .metric h3 { margin:0 0 6px 0; font-size:14px; color:#93c5fd; }
-              .metric p { margin:0; font-size:18px; }
-              footer { text-align:center; padding:18px; color:#9ca3af; font-size:12px; }
-              .ok { color:#34d399; }
-            </style>
-          </head>
-          <body>
-            <header>
-              <h1>DevSecOps Demo <span class="chip">Private EC2 + ALB</span></h1>
-            </header>
-            <main>
-              <div class="card">
-                <p>This page is served from an EC2 instance in a <strong>private subnet</strong> behind a public ALB.</p>
-                <div class="grid">
-                  <div class="metric"><h3>Instance ID</h3><p id="iid">${IID}</p></div>
-                  <div class="metric"><h3>AZ</h3><p id="az">${AZ}</p></div>
-                  <div class="metric"><h3>Private IP</h3><p id="ip">${IP}</p></div>
-                </div>
-                <p style="margin-top:16px">Status: <span class="ok">OK</span> – Apache is running.</p>
-              </div>
-            </main>
-            <footer>© Demo</footer>
-          </body>
-          </html>
-          HTML
-          SH
-          chmod +x /usr/local/bin/render-meta.sh
-          /usr/local/bin/render-meta.sh
+    cat >/var/www/html/index.html <<'HTML'
+    <!doctype html>
+    <html><body>
+    <h1>Private EC2 Metadata</h1>
+    <p>Instance ID: \$IID</p>
+    <p>Availability Zone: \$AZ</p>
+    <p>Private IP: \$IP</p>
+    </body></html>
+    HTML
+    SH
 
-          # Run it every minute via systemd timer
-          cat >/etc/systemd/system/render-meta.service <<'UNIT'
-          [Unit]
-          Description=Render EC2 metadata into /var/www/html/index.html
-          [Service]
-          Type=oneshot
-          ExecStart=/usr/local/bin/render-meta.sh
-          UNIT
+    chmod +x /usr/local/bin/render-meta.sh
+    /usr/local/bin/render-meta.sh
 
-          cat >/etc/systemd/system/render-meta.timer <<'UNIT'
-          [Unit]
-          Description=Run render-meta every minute
-          [Timer]
-          OnBootSec=30s
-          OnUnitActiveSec=60s
-          Unit=render-meta.service
-          [Install]
-          WantedBy=timers.target
-          UNIT
+    cat >/etc/systemd/system/render-meta.service <<'UNIT'
+    [Unit]
+    Description=Render EC2 metadata into /var/www/html/index.html
+    [Service]
+    Type=oneshot
+    ExecStart=/usr/local/bin/render-meta.sh
+    UNIT
 
-          systemctl daemon-reload
-          systemctl enable --now render-meta.timer
+    cat >/etc/systemd/system/render-meta.timer <<'UNIT'
+    [Unit]
+    Description=Run render-meta every minute
+    [Timer]
+    OnBootSec=30s
+    OnUnitActiveSec=60s
+    Unit=render-meta.service
+    [Install]
+    WantedBy=timers.target
+    UNIT
+
+    systemctl daemon-reload
+    systemctl enable --now render-meta.timer
+
 
       KeyName: !If [HasKeyName, !Ref KeyName, !Ref "AWS::NoValue"]
 
