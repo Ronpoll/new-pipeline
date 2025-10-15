@@ -9,10 +9,6 @@ phases:
       - aws --version
       - pip install --upgrade pip
       - pip install cfn-lint
-      - |
-        echo "Installing AWS Session Manager plugin (optional)..."
-        curl -s "https://s3.amazonaws.com/session-manager-downloads/plugin/latest/linux_64bit/session-manager-plugin.rpm" -o session-manager-plugin.rpm
-        sudo dnf install -y session-manager-plugin.rpm || true
       - echo "Environment setup complete."
 
   build:
@@ -22,7 +18,13 @@ phases:
       - cfn-lint -t root.yaml || true
 
       - echo "Packaging CloudFormation templates..."
-      - aws cloudformation package \
+      - |
+        if [ -z "$ARTIFACT_BUCKET" ]; then
+          echo "ERROR: ARTIFACT_BUCKET variable is not set."
+          exit 1
+        fi
+        echo "Using artifact bucket: $ARTIFACT_BUCKET"
+        aws cloudformation package \
           --template-file root.yaml \
           --s3-bucket "$ARTIFACT_BUCKET" \
           --output-template-file packaged.yaml
