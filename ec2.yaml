@@ -1,0 +1,159 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >
+  Dynamic EC2 instance with SSM access and auto-rendered Apache homepage.
+  Runs in a private subnet and fetches metadata dynamically.
+  Works in any region/account, no hardcoded values.
+
+Parameters:
+  ProjectTag:
+    Type: String
+    Default: pipeline-project
+    Description: Tag applied to instance and IAM role.
+  VpcId:
+    Type: AWS::EC2::VPC::Id
+  SubnetId:
+    Type: AWS::EC2::Subnet::Id
+  SecurityGroupId:
+    Type: AWS::EC2::SecurityGroup::Id
+  InstanceType:
+    Type: String
+    Default: t3.micro
+  KeyName:
+    Type: String
+    Default: ""
+    Description: Optional key pair (leave blank for SSM-only access).
+  LatestAmiId:
+    Type: AWS::EC2::Image::Id
+
+Conditions:
+  HasKeyName: !Not [!Equals [!Ref KeyName, ""]]
+
+Resources:
+
+  #################################
+  # IAM Role for EC2 + SSM
+  #################################
+  InstanceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal: { Service: ec2.amazonaws.com }
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectTag
+
+  InstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Roles: [!Ref InstanceRole]
+
+  #################################
+  # EC2 Instance
+  #################################
+  WebInstance:
+    Type: AWS::EC2::Instance
+    Properties:
+      ImageId: !Ref LatestAmiId
+      InstanceType: !Ref InstanceType
+      SubnetId: !Ref SubnetId
+      SecurityGroupIds: [!Ref SecurityGroupId]
+      IamInstanceProfile: !Ref InstanceProfile
+      SourceDestCheck: true
+      KeyName: !If [HasKeyName, !Ref KeyName, !Ref "AWS::NoValue"]
+      BlockDeviceMappings:
+        - DeviceName: /dev/xvda
+          Ebs:
+            VolumeSize: 10
+            VolumeType: gp3
+            DeleteOnTermination: true
+      Tags:
+        - Key: Name
+          Value: !Sub "${ProjectTag}-private-ec2"
+        - Key: Project
+          Value: !Ref ProjectTag
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash -xe
+          echo "==> Installing system packages"
+          dnf -y update
+          dnf -y install httpd curl jq
+          systemctl enable --now httpd
+          systemctl enable --now amazon-ssm-agent || true
+
+          echo "==> Creating health check page"
+          echo "OK" > /var/www/html/health.html
+
+          echo "==> Creating metadata renderer"
+          cat >/usr/local/bin/render-meta.sh <<'SH'
+          #!/bin/bash
+          set -euo pipefail
+          TOKEN=$(curl -sX PUT "http://169.254.169.254/latest/api/token" \
+                   -H "X-aws-ec2-metadata-token-ttl-seconds: 21600")
+          IID=$(curl -sH "X-aws-ec2-metadata-token: $TOKEN" \
+                   http://169.254.169.254/latest/meta-data/instance-id)
+          AZ=$(curl -sH "X-aws-ec2-metadata-token: $TOKEN" \
+                   http://169.254.169.254/latest/meta-data/placement/availability-zone)
+          IP=$(hostname -I | awk '{print $1}')
+          cat >/var/www/html/index.html <<HTML
+          <!doctype html>
+          <html lang="en">
+          <head>
+            <meta charset="utf-8">
+            <title>Private EC2 + ALB Demo</title>
+            <style>
+              body { font-family: system-ui, sans-serif; background: #0f172a; color: #e2e8f0; text-align:center; padding-top:40px; }
+              .metric { margin: 10px auto; padding:10px; border:1px solid #1f2937; border-radius:8px; width:300px; background:#111827; }
+              h2 { color:#93c5fd; }
+              footer { margin-top:40px; color:#9ca3af; font-size:12px; }
+            </style>
+          </head>
+          <body>
+            <h1>Private EC2 + ALB Demo</h1>
+            <div class="metric"><h2>Instance ID</h2><p>${IID}</p></div>
+            <div class="metric"><h2>AZ</h2><p>${AZ}</p></div>
+            <div class="metric"><h2>Private IP</h2><p>${IP}</p></div>
+            <footer>© ${ProjectTag} | Region: ${AWS::Region}</footer>
+          </body>
+          </html>
+          HTML
+          SH
+
+          chmod +x /usr/local/bin/render-meta.sh
+          /usr/local/bin/render-meta.sh
+
+          echo "==> Creating systemd timer"
+          cat >/etc/systemd/system/render-meta.service <<'UNIT'
+          [Unit]
+          Description=Render EC2 metadata to Apache index
+          [Service]
+          Type=oneshot
+          ExecStart=/usr/local/bin/render-meta.sh
+          UNIT
+
+          cat >/etc/systemd/system/render-meta.timer <<'UNIT'
+          [Unit]
+          Description=Run render-meta every minute
+          [Timer]
+          OnBootSec=30s
+          OnUnitActiveSec=60s
+          Unit=render-meta.service
+          [Install]
+          WantedBy=timers.target
+          UNIT
+
+          systemctl daemon-reload
+          systemctl enable --now render-meta.timer
+
+Outputs:
+  InstanceId:
+    Description: ID of the created EC2 instance
+    Value: !Ref WebInstance
+  PrivateIp:
+    Description: Private IP of the instance
+    Value: !GetAtt WebInstance.PrivateIp

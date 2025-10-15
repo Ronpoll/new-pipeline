@@ -1,0 +1,104 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >
+  Root stack – Orchestrates VPC, EC2, and ALB via nested stacks.
+  Fully dynamic: no hardcoded region, account, or role names.
+  Uses pseudo parameters and stack outputs for automation.
+
+Parameters:
+  ProjectTag:
+    Type: String
+    Default: pipeline-project
+    Description: Tag value to apply across all stacks.
+  InstanceType:
+    Type: String
+    Default: t3.micro
+  KeyName:
+    Type: String
+    Default: ""
+    Description: Optional key pair (leave blank for SSM-only access).
+  LatestAmiId:
+    Type: "AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>"
+    Default: /aws/service/ami-amazon-linux-latest/al2023-ami-kernel-6.1-x86_64
+  VpcCidr:
+    Type: String
+    Default: 10.0.0.0/16
+  PublicSubnetACidr:
+    Type: String
+    Default: 10.0.0.0/28
+  PublicSubnetBCidr:
+    Type: String
+    Default: 10.0.0.16/28
+  PrivateSubnetCidr:
+    Type: String
+    Default: 10.0.1.0/24
+
+Resources:
+  #################################
+  # VPC Stack
+  #################################
+  VpcStack:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: vpc.yaml
+      Parameters:
+        VpcCidr: !Ref VpcCidr
+        PublicSubnetACidr: !Ref PublicSubnetACidr
+        PublicSubnetBCidr: !Ref PublicSubnetBCidr
+        PrivateSubnetCidr: !Ref PrivateSubnetCidr
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectTag
+
+  #################################
+  # EC2 Stack
+  #################################
+  Ec2Stack:
+    Type: AWS::CloudFormation::Stack
+    DependsOn: VpcStack
+    Properties:
+      TemplateURL: ec2.yaml
+      Parameters:
+        VpcId: !GetAtt VpcStack.Outputs.VPC1Id
+        SubnetId: !GetAtt VpcStack.Outputs.PrivateSubnet1AId
+        SecurityGroupId: !GetAtt VpcStack.Outputs.WebSecurityGroupId
+        InstanceType: !Ref InstanceType
+        KeyName: !Ref KeyName
+        LatestAmiId: !Ref LatestAmiId
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectTag
+
+  #################################
+  # ALB Stack
+  #################################
+  AlbStack:
+    Type: AWS::CloudFormation::Stack
+    DependsOn: Ec2Stack
+    Properties:
+      TemplateURL: alb.yaml
+      Parameters:
+        VpcId: !GetAtt VpcStack.Outputs.VPC1Id
+        PublicSubnetAId: !GetAtt VpcStack.Outputs.PublicSubnetAId
+        PublicSubnetBId: !GetAtt VpcStack.Outputs.PublicSubnetBId
+        AlbSecurityGroupId: !GetAtt VpcStack.Outputs.AlbSecurityGroupId
+        TargetInstanceId: !GetAtt Ec2Stack.Outputs.InstanceId
+        TargetPort: 80
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectTag
+
+Outputs:
+  ProjectRegion:
+    Value: !Ref AWS::Region
+  ProjectAccountId:
+    Value: !Ref AWS::AccountId
+  VpcId:
+    Value: !GetAtt VpcStack.Outputs.VPC1Id
+  PrivateSubnetId:
+    Value: !GetAtt VpcStack.Outputs.PrivateSubnet1AId
+  InstanceId:
+    Value: !GetAtt Ec2Stack.Outputs.InstanceId
+  PrivateIp:
+    Value: !GetAtt Ec2Stack.Outputs.PrivateIp
+  AlbDNSName:
+    Value: !GetAtt AlbStack.Outputs.AlbDNSName

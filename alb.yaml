@@ -1,0 +1,96 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >
+  Dynamic Application Load Balancer (ALB) stack for the pipeline project.
+  Fully automated and adaptable to any AWS region/account.
+  Forwards HTTP traffic from the internet to a private EC2 instance.
+
+Parameters:
+  ProjectTag:
+    Type: String
+    Default: pipeline-project
+    Description: Tag applied to all ALB resources.
+  VpcId:
+    Type: AWS::EC2::VPC::Id
+  PublicSubnetAId:
+    Type: AWS::EC2::Subnet::Id
+  PublicSubnetBId:
+    Type: AWS::EC2::Subnet::Id
+  AlbSecurityGroupId:
+    Type: AWS::EC2::SecurityGroup::Id
+  TargetInstanceId:
+    Type: String
+  TargetPort:
+    Type: Number
+    Default: 80
+
+Resources:
+
+  #################################
+  # Application Load Balancer
+  #################################
+  ALB:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      Name: !Sub "${ProjectTag}-alb"
+      Scheme: internet-facing
+      Type: application
+      Subnets:
+        - !Ref PublicSubnetAId
+        - !Ref PublicSubnetBId
+      SecurityGroups:
+        - !Ref AlbSecurityGroupId
+      IpAddressType: ipv4
+      Tags:
+        - Key: Name
+          Value: !Sub "${ProjectTag}-alb"
+        - Key: Project
+          Value: !Ref ProjectTag
+
+  #################################
+  # Target Group
+  #################################
+  TargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      Name: !Sub "${ProjectTag}-tg"
+      VpcId: !Ref VpcId
+      Port: !Ref TargetPort
+      Protocol: HTTP
+      TargetType: instance
+      HealthCheckEnabled: true
+      HealthCheckPath: /health.html
+      HealthCheckIntervalSeconds: 10
+      HealthCheckTimeoutSeconds: 5
+      HealthyThresholdCount: 2
+      UnhealthyThresholdCount: 2
+      Matcher:
+        HttpCode: "200-399"
+      Targets:
+        - Id: !Ref TargetInstanceId
+          Port: !Ref TargetPort
+      Tags:
+        - Key: Name
+          Value: !Sub "${ProjectTag}-tg"
+        - Key: Project
+          Value: !Ref ProjectTag
+
+  #################################
+  # HTTP Listener
+  #################################
+  HttpListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      LoadBalancerArn: !Ref ALB
+      Port: 80
+      Protocol: HTTP
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn: !Ref TargetGroup
+
+Outputs:
+  AlbDNSName:
+    Description: DNS name of the Application Load Balancer
+    Value: !GetAtt ALB.DNSName
+  TargetGroupArn:
+    Description: ARN of the target group
+    Value: !Ref TargetGroup

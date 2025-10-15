@@ -1,0 +1,288 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >
+  Dynamic VPC stack for the pipeline project.
+  Includes public/private subnets, NAT, endpoints, and security groups.
+  Works in any region/account with zero hardcoding.
+
+Parameters:
+  ProjectTag:
+    Type: String
+    Default: pipeline-project
+    Description: Tag value applied to all resources.
+  VpcCidr:
+    Type: String
+    Default: 10.0.0.0/16
+  PrivateSubnetCidr:
+    Type: String
+    Default: 10.0.1.0/24
+  PublicSubnetACidr:
+    Type: String
+    Default: 10.0.0.0/28
+  PublicSubnetBCidr:
+    Type: String
+    Default: 10.0.0.16/28
+
+Resources:
+
+  #################################
+  # Core Networking
+  #################################
+  VPC1:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: !Ref VpcCidr
+      EnableDnsHostnames: true
+      EnableDnsSupport: true
+      Tags:
+        - Key: Name
+          Value: !Sub "${ProjectTag}-vpc"
+        - Key: Project
+          Value: !Ref ProjectTag
+
+  IGW:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - Key: Name
+          Value: !Sub "${ProjectTag}-igw"
+        - Key: Project
+          Value: !Ref ProjectTag
+
+  AttachIgw:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref VPC1
+      InternetGatewayId: !Ref IGW
+
+  #################################
+  # Public Subnets
+  #################################
+  PublicSubnetA:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC1
+      CidrBlock: !Ref PublicSubnetACidr
+      MapPublicIpOnLaunch: true
+      AvailabilityZone: !Select [0, !GetAZs ""]
+      Tags:
+        - Key: Name
+          Value: !Sub "${ProjectTag}-public-a"
+        - Key: Project
+          Value: !Ref ProjectTag
+
+  PublicSubnetB:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC1
+      CidrBlock: !Ref PublicSubnetBCidr
+      MapPublicIpOnLaunch: true
+      AvailabilityZone: !Select [1, !GetAZs ""]
+      Tags:
+        - Key: Name
+          Value: !Sub "${ProjectTag}-public-b"
+        - Key: Project
+          Value: !Ref ProjectTag
+
+  PublicRT:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC1
+      Tags:
+        - Key: Name
+          Value: !Sub "${ProjectTag}-public-rt"
+
+  PublicDefaultRoute:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref PublicRT
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref IGW
+
+  AssocPublicA:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnetA
+      RouteTableId: !Ref PublicRT
+
+  AssocPublicB:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnetB
+      RouteTableId: !Ref PublicRT
+
+  #################################
+  # NAT Gateway for Private Subnet
+  #################################
+  NatEip:
+    Type: AWS::EC2::EIP
+    Properties:
+      Domain: vpc
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectTag
+
+  NatGw:
+    Type: AWS::EC2::NatGateway
+    Properties:
+      AllocationId: !GetAtt NatEip.AllocationId
+      SubnetId: !Ref PublicSubnetA
+      Tags:
+        - Key: Name
+          Value: !Sub "${ProjectTag}-natgw"
+        - Key: Project
+          Value: !Ref ProjectTag
+
+  #################################
+  # Private Subnet
+  #################################
+  PrivateSubnet1A:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC1
+      CidrBlock: !Ref PrivateSubnetCidr
+      MapPublicIpOnLaunch: false
+      AvailabilityZone: !Select [0, !GetAZs ""]
+      Tags:
+        - Key: Name
+          Value: !Sub "${ProjectTag}-private-a"
+        - Key: Project
+          Value: !Ref ProjectTag
+
+  PrivateRT:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC1
+      Tags:
+        - Key: Name
+          Value: !Sub "${ProjectTag}-private-rt"
+
+  PrivateDefaultRoute:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref PrivateRT
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !Ref NatGw
+
+  AssocPrivateA:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PrivateSubnet1A
+      RouteTableId: !Ref PrivateRT
+
+  #################################
+  # Security Groups
+  #################################
+  AlbSG:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Allow HTTP from the internet to ALB
+      VpcId: !Ref VPC1
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+      SecurityGroupEgress:
+        - IpProtocol: -1
+          CidrIp: 0.0.0.0/0
+      Tags:
+        - Key: Name
+          Value: !Sub "${ProjectTag}-alb-sg"
+        - Key: Project
+          Value: !Ref ProjectTag
+
+  WebSG:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Allow HTTP from ALB to EC2
+      VpcId: !Ref VPC1
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          SourceSecurityGroupId: !Ref AlbSG
+      SecurityGroupEgress:
+        - IpProtocol: -1
+          CidrIp: 0.0.0.0/0
+      Tags:
+        - Key: Name
+          Value: !Sub "${ProjectTag}-web-sg"
+        - Key: Project
+          Value: !Ref ProjectTag
+
+  #################################
+  # VPC Endpoints (SSM, EC2Messages, S3)
+  #################################
+  EndpointSG:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      VpcId: !Ref VPC1
+      GroupDescription: Allow HTTPS from private subnet to VPC endpoints
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: !Ref PrivateSubnetCidr
+      SecurityGroupEgress:
+        - IpProtocol: -1
+          CidrIp: 0.0.0.0/0
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectTag
+
+  VPCEndpointSSM:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcEndpointType: Interface
+      ServiceName: !Sub com.amazonaws.${AWS::Region}.ssm
+      VpcId: !Ref VPC1
+      SubnetIds: [!Ref PrivateSubnet1A]
+      SecurityGroupIds: [!Ref EndpointSG]
+      PrivateDnsEnabled: true
+
+  VPCEndpointSSMMessages:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcEndpointType: Interface
+      ServiceName: !Sub com.amazonaws.${AWS::Region}.ssmmessages
+      VpcId: !Ref VPC1
+      SubnetIds: [!Ref PrivateSubnet1A]
+      SecurityGroupIds: [!Ref EndpointSG]
+      PrivateDnsEnabled: true
+
+  VPCEndpointEC2Messages:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcEndpointType: Interface
+      ServiceName: !Sub com.amazonaws.${AWS::Region}.ec2messages
+      VpcId: !Ref VPC1
+      SubnetIds: [!Ref PrivateSubnet1A]
+      SecurityGroupIds: [!Ref EndpointSG]
+      PrivateDnsEnabled: true
+
+  VPCEndpointS3:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcEndpointType: Gateway
+      ServiceName: !Sub com.amazonaws.${AWS::Region}.s3
+      VpcId: !Ref VPC1
+      RouteTableIds: [!Ref PrivateRT]
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectTag
+
+Outputs:
+  VPC1Id:
+    Value: !Ref VPC1
+  PrivateSubnet1AId:
+    Value: !Ref PrivateSubnet1A
+  PublicSubnetAId:
+    Value: !Ref PublicSubnetA
+  PublicSubnetBId:
+    Value: !Ref PublicSubnetB
+  AlbSecurityGroupId:
+    Value: !Ref AlbSG
+  WebSecurityGroupId:
+    Value: !Ref WebSG
+  VpcCidr:
+    Value: !Ref VpcCidr
