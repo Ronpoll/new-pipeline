@@ -63,7 +63,7 @@ Resources:
         - Key: Name
           Value: PrivateWeb
       UserData:
-        Fn::Base64: !Sub |
+        Fn::Base64: |
           #!/bin/bash -xe
           dnf -y update
           dnf -y install httpd
@@ -73,7 +73,7 @@ Resources:
           # health check for ALB
           echo OK > /var/www/html/health.html
 
-          # create metadata renderer
+          # script that renders metadata into index.html
           cat >/usr/local/bin/render-meta.sh <<'SH'
           #!/bin/bash
           set -euo pipefail
@@ -130,7 +130,7 @@ Resources:
           chmod +x /usr/local/bin/render-meta.sh
           /usr/local/bin/render-meta.sh
 
-          # Run it every minute via systemd timer
+          # run it every minute
           cat >/etc/systemd/system/render-meta.service <<'UNIT'
           [Unit]
           Description=Render EC2 metadata into /var/www/html/index.html
