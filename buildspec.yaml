@@ -2,8 +2,6 @@ version: 0.2
 
 phases:
   install:
-    runtime-versions:
-      python: 3.11
     commands:
       - echo "=== INSTALLING DEPENDENCIES ==="
       - pip install --upgrade pip
@@ -24,30 +22,44 @@ phases:
           fi
         done
       - echo "CloudFormation syntax validation complete."
-  
+
   build:
     commands:
-    - echo "=== RUNNING SECURITY AND LINTING SCANS ==="
-    - |
-      for file in $(find . -name "*.yaml" -o -name "*.yml"); do
-        echo "Checking if $file looks like a CloudFormation template..."
-        if grep -q '^Resources:' "$file"; then
-          echo "Linting $file..."
-          cfn-lint "$file"
-          status=$?
-          if [ $status -eq 4 ]; then
-            echo "❌ Linting failed: CloudFormation errors detected in $file"
-            exit 1
-          elif [ $status -eq 2 ]; then
-            echo "⚠️ Linting warnings found in $file, continuing..."
+      - echo "=== RUNNING CLOUDFORMATION LINTING ==="
+      - |
+        for file in $(find . -name "*.yaml" -o -name "*.yml"); do
+          echo "Checking if $file looks like a CloudFormation template..."
+          if grep -q '^Resources:' "$file"; then
+            echo "Linting $file..."
+            # Ignore known harmless warnings (optional):
+            # cfn-lint --ignore-checks W3002 W3005 "$file"
+            cfn-lint "$file"
+            status=$?
+            if [ $status -eq 4 ]; then
+              echo "❌ Linting failed: CloudFormation errors detected in $file"
+              exit 1
+            elif [ $status -eq 2 ]; then
+              echo "⚠️ Linting warnings found in $file, continuing..."
+            else
+              echo "✅ Linting passed for $file"
+            fi
           else
-            echo "✅ Linting passed for $file"
+            echo "Skipping $file (no Resources section detected)"
           fi
-        else
-          echo "Skipping $file (no Resources section detected)"
-        fi
-      done
+        done
 
+      - echo "=== RUNNING PYTHON SECURITY SCAN (BANDIT) ==="
+      - |
+        python_files=$(find . -name "*.py" | wc -l)
+        if [ "$python_files" -gt 0 ]; then
+          echo "Found $python_files Python files. Running Bandit security scan..."
+          bandit -r . || echo "⚠️ Bandit reported findings (non-blocking)."
+        else
+          echo "No Python files found. Skipping Bandit scan."
+        fi
+
+      # Force success even if warnings or Bandit findings exist
+      - exit 0
 
   post_build:
     commands:
@@ -59,4 +71,3 @@ phases:
 artifacts:
   files:
     - output/**/*
-  discard-paths: no
