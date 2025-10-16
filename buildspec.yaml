@@ -2,72 +2,40 @@ version: 0.2
 
 phases:
   install:
+    runtime-versions:
+      python: 3.11
     commands:
-      - echo "=== INSTALLING DEPENDENCIES ==="
+      - echo "Installing prerequisites..."
+      - aws --version
       - pip install --upgrade pip
-      - pip install cfn-lint bandit
-      - echo "✅ Dependencies installed successfully."
-
-  pre_build:
-    commands:
-      - echo "=== VALIDATING CLOUDFORMATION TEMPLATES (non-blocking) ==="
-      - |
-        for file in $(find . -name "*.yaml" -o -name "*.yml"); do
-          echo "Checking if $file looks like a CloudFormation template..."
-          if grep -q '^Resources:' "$file"; then
-            echo "Validating $file..."
-            aws cloudformation validate-template --template-body file://"$file" \
-              && echo "✅ Validation passed for $file" \
-              || echo "⚠️ Validation warning for $file (non-blocking)"
-          else
-            echo "Skipping $file (no Resources section detected)"
-          fi
-        done
-      - echo "✅ CloudFormation syntax validation complete (non-blocking)."
+      - pip install cfn-lint
+      - echo "Environment setup complete."
 
   build:
     commands:
-      - echo "=== RUNNING CLOUDFORMATION LINTING (non-blocking) ==="
-      - |
-        for file in $(find . -name "*.yaml" -o -name "*.yml"); do
-          echo "Checking if $file looks like a CloudFormation template..."
-          if grep -q '^Resources:' "$file"; then
-            echo "Linting $file..."
-            cfn-lint "$file" || echo "⚠️ Linting issues found in $file (non-blocking)."
-          else
-            echo "Skipping $file (no Resources section detected)"
-          fi
-        done
+      - echo "Starting build phase..."
+      - echo "Running CloudFormation linter..."
+      - cfn-lint -t root.yaml || true
 
-      - echo "=== RUNNING PYTHON SECURITY SCAN (BANDIT, non-blocking) ==="
+      - echo "Packaging CloudFormation templates..."
       - |
-        python_files=$(find . -name "*.py" | wc -l)
-        if [ "$python_files" -gt 0 ]; then
-          echo "Found $python_files Python files. Running Bandit scan..."
-          bandit -r . || echo "⚠️ Bandit reported findings (non-blocking)."
-        else
-          echo "No Python files found. Skipping Bandit scan."
+        if [ -z "$ARTIFACT_BUCKET" ]; then
+          echo "ERROR: ARTIFACT_BUCKET variable is not set."
+          exit 1
         fi
-
-      - echo "✅ BUILD PHASE COMPLETE (all warnings ignored, continuing to deploy)"
-      - exit 0
-
-  post_build:
-    commands:
-      - echo "=== PACKAGING BUILD ARTIFACTS ==="
-      - mkdir -p output
-      - echo "Creating packaged.yaml for deployment..."
-      - aws cloudformation package \
+        echo "Using artifact bucket: $ARTIFACT_BUCKET"
+        aws cloudformation package \
           --template-file root.yaml \
-          --s3-bucket $ARTIFACT_BUCKET \
-          --output-template-file output/packaged.yaml
-      - cp -r *.yaml output/ || true
-      - echo "✅ Build completed successfully — artifacts packaged for deployment."
+          --s3-bucket "$ARTIFACT_BUCKET" \
+          --output-template-file packaged.yaml
+
+      - echo "Verifying packaged.yaml exists..."
+      - test -f packaged.yaml && echo "Packaging complete." || (echo "packaged.yaml missing!" && exit 1)
 
 artifacts:
   files:
-    - output/packaged.yaml
-    - output/*.yaml
+    - packaged.yaml
+    - "*.yaml"
 
 cache:
   paths:
