@@ -107,7 +107,7 @@ Resources:
           </head>
           <body>
             <header>
-              <h1>DevSecOps Demo <span class="chip">Private EC2 + ALB</span></h1>
+              <h1>Elinor and Ron's AWS Project <span class="chip">DevSecOps 21</span></h1>
             </header>
             <main>
               <div class="card">
