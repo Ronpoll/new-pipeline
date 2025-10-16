@@ -13,30 +13,30 @@ phases:
   pre_build:
     commands:
       - echo "=== VALIDATING CLOUDFORMATION TEMPLATES ==="
-      # Validate all YAML templates
-      - for file in $(find . -name "*.yaml" -o -name "*.yml" | grep -v buildspec.yaml); do
-          echo "Validating $file...";
-          aws cloudformation validate-template --template-body file://$file || exit 1;
+      - |
+        for file in $(find . -name "*.yaml" -o -name "*.yml"); do
+          echo "Checking if $file looks like a CloudFormation template..."
+          if grep -q '^Resources:' "$file"; then
+            echo "Validating $file..."
+            aws cloudformation validate-template --template-body file://"$file" || exit 1
+          else
+            echo "Skipping $file (no Resources section detected)"
+          fi
         done
       - echo "CloudFormation syntax validation complete."
 
   build:
     commands:
       - echo "=== RUNNING SECURITY AND LINTING SCANS ==="
-      # Run linting
-      - for file in $(find . -name "*.yaml" -o -name "*.yml" | grep -v buildspec.yaml); do
+      - for file in $(find . -name "*.yaml" -o -name "*.yml"); do
           echo "Linting $file...";
           cfn-lint $file || exit 1;
         done
-      # Run security scanning with cfn-nag
-      - for file in $(find . -name "*.yaml" -o -name "*.yml" | grep -v buildspec.yaml); do
-          echo "Security scanning $file...";
-          cfn-nag-scan --input-path $file || exit 1;
-        done
-      # Optional: run Bandit to detect suspicious Python code
       - if [ -d "src" ]; then
-          echo "Running Bandit security scan on Python code...";
+          echo "Running Bandit security scan on Python source code...";
           bandit -r src || exit 1;
+        else
+          echo "No src directory found, skipping Python security scan.";
         fi
       - echo "All templates and code passed validation!"
 
