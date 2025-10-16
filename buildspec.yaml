@@ -24,13 +24,19 @@ phases:
           fi
         done
       - echo "CloudFormation syntax validation complete."
-
+  
   build:
     commands:
       - echo "=== RUNNING SECURITY AND LINTING SCANS ==="
-      - for file in $(find . -name "*.yaml" -o -name "*.yml"); do
-          echo "Linting $file...";
-          cfn-lint $file || exit 1;
+      - |
+        for file in $(find . -name "*.yaml" -o -name "*.yml"); do
+          echo "Checking if $file looks like a CloudFormation template..."
+          if grep -q '^Resources:' "$file"; then
+            echo "Linting $file..."
+            cfn-lint "$file" || exit 1
+          else
+            echo "Skipping $file (no Resources section detected)"
+          fi
         done
       - if [ -d "src" ]; then
           echo "Running Bandit security scan on Python source code...";
@@ -39,6 +45,7 @@ phases:
           echo "No src directory found, skipping Python security scan.";
         fi
       - echo "All templates and code passed validation!"
+
 
   post_build:
     commands:
