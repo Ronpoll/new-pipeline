@@ -6,7 +6,7 @@ phases:
       - echo "=== INSTALLING DEPENDENCIES ==="
       - pip install --upgrade pip
       - pip install cfn-lint bandit
-      - echo "Dependencies installed successfully."
+      - echo "✅ Dependencies installed successfully."
 
   pre_build:
     commands:
@@ -23,7 +23,7 @@ phases:
             echo "Skipping $file (no Resources section detected)"
           fi
         done
-      - echo "CloudFormation syntax validation complete (non-blocking)."
+      - echo "✅ CloudFormation syntax validation complete (non-blocking)."
 
   build:
     commands:
@@ -56,9 +56,19 @@ phases:
     commands:
       - echo "=== PACKAGING BUILD ARTIFACTS ==="
       - mkdir -p output
+      - echo "Creating packaged.yaml for deployment..."
+      - aws cloudformation package \
+          --template-file root.yaml \
+          --s3-bucket $ARTIFACT_BUCKET \
+          --output-template-file output/packaged.yaml
       - cp -r *.yaml output/ || true
       - echo "✅ Build completed successfully — artifacts packaged for deployment."
 
 artifacts:
   files:
-    - output/**/*
+    - output/packaged.yaml
+    - output/*.yaml
+
+cache:
+  paths:
+    - '/root/.cache/pip/**/*'
