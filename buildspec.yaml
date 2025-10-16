@@ -7,7 +7,7 @@ phases:
     commands:
       - echo "=== INSTALLING DEPENDENCIES ==="
       - pip install --upgrade pip
-      - pip install cfn-lint cfn-nag bandit
+      - pip install cfn-lint bandit
       - echo "Dependencies installed successfully."
 
   pre_build:
