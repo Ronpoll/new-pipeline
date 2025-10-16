@@ -9,6 +9,30 @@ phases:
       - aws --version
       - pip install --upgrade pip
       - pip install cfn-lint
+      - echo "Installing ClamAV..."
+      - |
+        # Try yum (Amazon Linux) then apt-get (Debian/Ubuntu)
+        if command -v yum >/dev/null 2>&1; then
+          yum install -y clamav clamav-update || true
+        elif command -v apt-get >/dev/null 2>&1; then
+          apt-get update -y && apt-get install -y clamav clamav-freshclam || true
+        else
+          echo "No supported package manager found; skipping ClamAV install"
+        fi
+      - echo "Updating ClamAV DB (freshclam) — will fall back to direct download if needed..."
+      - |
+        if command -v freshclam >/dev/null 2>&1; then
+          freshclam || echo "freshclam failed; attempting direct DB download"
+        fi
+      - |
+        # If database still missing, try direct download (useful in restricted envs)
+        CLAM_DIR="/var/lib/clamav"
+        mkdir -p "${CLAM_DIR}"
+        if [ ! -f "${CLAM_DIR}/main.cvd" ] && [ ! -f "${CLAM_DIR}/daily.cvd" ]; then
+          echo "Attempting to fetch CVD files directly..."
+          curl -sfS --retry 3 https://database.clamav.net/main.cvd -o "${CLAM_DIR}/main.cvd" || true
+          curl -sfS --retry 3 https://database.clamav.net/daily.cvd -o "${CLAM_DIR}/daily.cvd" || true
+        fi
       - echo "Environment setup complete."
 
   build:
@@ -16,6 +40,26 @@ phases:
       - echo "Starting build phase..."
       - echo "Running CloudFormation linter..."
       - cfn-lint -t root.yaml || true
+
+      - echo "Running malware scan with ClamAV (will fail the build if infections detected)..."
+      - |
+        # run a recursive scan of the source dir
+        if command -v clamscan >/dev/null 2>&1; then
+          clamscan -r --bell -i .
+          scan_status=$?
+          # clamscan returns: 0 = no virus, 1 = virus(es) found, >1 = error
+          if [ $scan_status -eq 1 ]; then
+            echo "❌ Malware detected by clamscan — failing the build."
+            exit 1
+          elif [ $scan_status -gt 1 ]; then
+            echo "❌ clamscan error (status=$scan_status) — failing the build."
+            exit 1
+          else
+            echo "✅ No malware found."
+          fi
+        else
+          echo "⚠️ clamscan not available — skipping malware scan (this may be a security risk)."
+        fi
 
       - echo "Packaging CloudFormation templates..."
       - |
