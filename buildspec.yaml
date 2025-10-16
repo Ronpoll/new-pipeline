@@ -5,38 +5,49 @@ phases:
     runtime-versions:
       python: 3.11
     commands:
-      - echo "Installing prerequisites..."
-      - aws --version
+      - echo "=== INSTALLING DEPENDENCIES ==="
       - pip install --upgrade pip
-      - pip install cfn-lint
-      - echo "Environment setup complete."
+      - pip install cfn-lint cfn-nag bandit
+      - echo "Dependencies installed successfully."
+
+  pre_build:
+    commands:
+      - echo "=== VALIDATING CLOUDFORMATION TEMPLATES ==="
+      # Validate all YAML templates
+      - for file in $(find . -name "*.yaml" -o -name "*.yml"); do
+          echo "Validating $file...";
+          aws cloudformation validate-template --template-body file://$file || exit 1;
+        done
+      - echo "CloudFormation syntax validation complete."
 
   build:
     commands:
-      - echo "Starting build phase..."
-      - echo "Running CloudFormation linter..."
-      - cfn-lint -t root.yaml || true
-
-      - echo "Packaging CloudFormation templates..."
-      - |
-        if [ -z "$ARTIFACT_BUCKET" ]; then
-          echo "ERROR: ARTIFACT_BUCKET variable is not set."
-          exit 1
+      - echo "=== RUNNING SECURITY AND LINTING SCANS ==="
+      # Run linting
+      - for file in $(find . -name "*.yaml" -o -name "*.yml"); do
+          echo "Linting $file...";
+          cfn-lint $file || exit 1;
+        done
+      # Run security scanning with cfn-nag
+      - for file in $(find . -name "*.yaml" -o -name "*.yml"); do
+          echo "Security scanning $file...";
+          cfn-nag-scan --input-path $file || exit 1;
+        done
+      # Optional: run Bandit to detect suspicious Python code
+      - if [ -d "src" ]; then
+          echo "Running Bandit security scan on Python code...";
+          bandit -r src || exit 1;
         fi
-        echo "Using artifact bucket: $ARTIFACT_BUCKET"
-        aws cloudformation package \
-          --template-file root.yaml \
-          --s3-bucket "$ARTIFACT_BUCKET" \
-          --output-template-file packaged.yaml
+      - echo "All templates and code passed validation!"
 
-      - echo "Verifying packaged.yaml exists..."
-      - test -f packaged.yaml && echo "Packaging complete." || (echo "packaged.yaml missing!" && exit 1)
+  post_build:
+    commands:
+      - echo "=== PACKAGING BUILD ARTIFACTS ==="
+      - mkdir -p output
+      - cp -r *.yaml output/ || true
+      - echo "Build completed successfully and artifacts packaged."
 
 artifacts:
   files:
-    - packaged.yaml
-    - "*.yaml"
-
-cache:
-  paths:
-    - '/root/.cache/pip/**/*'
+    - output/**/*
+  discard-paths: no
