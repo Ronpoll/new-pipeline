@@ -2,8 +2,6 @@ AWSTemplateFormatVersion: "2010-09-09"
 Description: Private EC2 instance with SSM access and Apache homepage rendering instance metadata every minute.
 
 Parameters:
-  VpcId:
-    Type: AWS::EC2::VPC::Id
   SubnetId:
     Type: AWS::EC2::Subnet::Id
   SecurityGroupId:
