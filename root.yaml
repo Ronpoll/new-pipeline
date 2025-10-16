@@ -58,7 +58,6 @@ Resources:
     Properties:
       TemplateURL: ec2.yaml
       Parameters:
-        VpcId: !GetAtt VpcStack.Outputs.VPC1Id
         SubnetId: !GetAtt VpcStack.Outputs.PrivateSubnet1AId
         SecurityGroupId: !GetAtt VpcStack.Outputs.WebSecurityGroupId
         InstanceType: !Ref InstanceType
