@@ -61,6 +61,9 @@ phases:
           echo "⚠️ clamscan not available — skipping malware scan (this may be a security risk)."
         fi
 
+      - echo "Cleaning old artifacts from $ARTIFACT_BUCKET..."
+      - aws s3 rm "s3://$ARTIFACT_BUCKET" --recursive || true
+
       - echo "Packaging CloudFormation templates..."
       - |
         if [ -z "$ARTIFACT_BUCKET" ]; then
