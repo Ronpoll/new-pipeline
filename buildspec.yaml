@@ -14,7 +14,7 @@ phases:
     commands:
       - echo "=== VALIDATING CLOUDFORMATION TEMPLATES ==="
       # Validate all YAML templates
-      - for file in $(find . -name "*.yaml" -o -name "*.yml"); do
+      - for file in $(find . -name "*.yaml" -o -name "*.yml" | grep -v buildspec.yaml); do
           echo "Validating $file...";
           aws cloudformation validate-template --template-body file://$file || exit 1;
         done
@@ -24,12 +24,12 @@ phases:
     commands:
       - echo "=== RUNNING SECURITY AND LINTING SCANS ==="
       # Run linting
-      - for file in $(find . -name "*.yaml" -o -name "*.yml"); do
+      - for file in $(find . -name "*.yaml" -o -name "*.yml" | grep -v buildspec.yaml); do
           echo "Linting $file...";
           cfn-lint $file || exit 1;
         done
       # Run security scanning with cfn-nag
-      - for file in $(find . -name "*.yaml" -o -name "*.yml"); do
+      - for file in $(find . -name "*.yaml" -o -name "*.yml" | grep -v buildspec.yaml); do
           echo "Security scanning $file...";
           cfn-nag-scan --input-path $file || exit 1;
         done
